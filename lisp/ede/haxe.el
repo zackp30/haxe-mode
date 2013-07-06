@@ -59,8 +59,10 @@ is in the project it will be executed."
   (let ((compiler "haxe")
         (version "0.0")
         (file (expand-file-name ".haxeproject" dir))
-        name std-lib haxelib lib sources hxml)
-    (load-file file)
+        name std-lib haxelib lib sources flymake-dir hxml)
+    (with-temp-buffer
+      (find-file-literally file)
+      (loop for (k v) in (read (buffer-string)) do (set k v)))
     (unless name (error "Invalid project file, missing \"name\""))
     (make-instance 'haxe-ede-project
                    name
@@ -73,6 +75,7 @@ is in the project it will be executed."
                    :file file
                    :lib lib
                    :sources sources
+                   :flymake-dir flymake-dir
                    :hxml hxml)))
 
 ;;;###autoload
@@ -124,10 +127,14 @@ ROOTPROJ is nil, since there is only one project."
         :type string
         :documentation "The location of HaXe library (swf format, svg format etc.)")
    (sources :initarg :sources
-            :intifrom nil
+            :intiform nil
             :type list
             :documentation "All source DIRECTORIES used in this project: what would fit
 -cp compiler argument")
+   (flymake-dir :initarg :flymake-dir
+                :initform "./flymake"
+                :type string
+                :documentation "The directory where we should create temp files for Flymake")
    (hxml :initarg :hxml
          :initform nil
          :type list
@@ -155,5 +162,25 @@ if there is no .haxeproject file."))))
   (interactive)
   ;; Not sure if we need to be interactive here...
   (message "I am haxe-speedbar-resouces and I was called!"))
+
+(defmethod haxe-resolve-project-source ((this haxe-ede-project) absolute-path)
+  (loop for dir in (oref this sources)
+        for fn = (file-relative-name absolute-path dir) do
+        (when (< (length fn) (length absolute-path))
+          (return fn))
+        finally (return absolute-path)))
+
+(defun haxe-ensure-file (file original)
+  (make-directory (file-name-directory file) t)
+  (copy-file original file 'overwrite) file)
+
+(defmethod haxe-flymake-source ((this haxe-ede-project) absolute-path)
+  (let ((project-root (file-name-directory (oref this file)))
+        (relative-path (haxe-resolve-project-source this absolute-path)))
+    ;; TODO: There's a function `haxe-ensure-completion-file' which has to
+    ;; use this routine instead of what it does now...
+    (haxe-ensure-file
+     (concat project-root (oref this flymake-dir) relative-path)
+     absolute-path)))
 
 (provide 'ede/haxe)

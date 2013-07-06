@@ -1,11 +1,11 @@
 ;; -*- mode: Lisp; -*-
 
-(setq compiler "haxe"
-      version "0.0"
-      name "$project"
-      std-lib "/usr/lib/haxe/std/"
-      haxelib "/usr/lib/haxe/haxelib/"
-      lib "/usr/lib/haxe/lib/"
-      sources '("${destination}src/")
-      hxml '((release . "release.hxml")
-             (debug . "debug.hxml")))
+((compiler "haxe")
+ (version "0.0")
+ (name "$project")
+ (std-lib "/usr/lib/haxe/std/")
+ (haxelib "/usr/lib/haxe/haxelib/")
+ (lib "/usr/lib/haxe/lib/")
+ (sources '("${destination}src/"))
+ (hxml '((release . "release.hxml")
+         (debug . "debug.hxml"))))

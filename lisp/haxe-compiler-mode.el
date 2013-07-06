@@ -201,11 +201,16 @@ the second is for paren hint")
             :documentation "The requiest sent to server.")
    (project :intiarg :project
             :initform nil
-            :type symbol
+            :type (or symbol haxe-ede-project)
             :documentation "This is the project associated with a group of
 HaXe source files all of which will use this connection when requesting
 flymake or compilation. However, projects may define multiple connection,
 so this is not a one to one correspondence.")
+   (interactive-buffer
+    :initarg :interactive-buffer
+    :initform nil
+    :type buffer
+    :documentation "The interactive buffer for communicating with Haxe compiler")
    (buffers :initarg :buffers
             :initform nil
             :type list
@@ -236,9 +241,10 @@ case, the current buffer is used."
   (let ((con (car spec))
         (slots (cadr spec))
         (buffer (or (caddr spec) '(current-buffer))))
-    `(let ((,con (haxe--connection-for-buffer ,buffer)))
-       (with-slots ,slots ,con
-         ,@body))))
+    `(with-current-buffer ,buffer
+       (let ((,con (haxe--connection-for-buffer ,buffer)))
+         (with-slots ,slots ,con
+           ,@body)))))
 
 (defmacro haxe-with-connection-process (spec &rest body)
   "Similar to `haxe-with-connection' except for that the process is
@@ -247,9 +253,10 @@ used to identify the connection."
   (let ((con (car spec))
         (slots (cadr spec))
         (proc (caddr spec)))
-    `(let ((,con (haxe--connection-for-process ,proc)))
-       (with-slots ,slots ,con
-         ,@body))))
+       `(let ((,con (haxe--connection-for-process ,proc)))
+          (with-current-buffer (oref ,con interactive-buffer) 
+            (with-slots ,slots ,con
+              ,@body)))))
 
 (defmacro haxe-with-connection-project (spec &rest body)
   "Similar to `haxe-with-connection' except for that the project is
@@ -259,8 +266,9 @@ used to identify the connection."
         (slots (cadr spec))
         (proj (caddr spec)))
     `(let ((,con (haxe--connection-for-project ,proj)))
-       (with-slots ,slots ,con
-         ,@body))))
+       (with-current-buffer (oref ,con interactive-buffer) 
+         (with-slots ,slots ,con
+           ,@body)))))
 
 (defun haxe-listen-filter (proc input)
   "Is called by the running HaXe server to report events, if any."
@@ -271,6 +279,7 @@ used to identify the connection."
             expected-prefix
             expected-suffix
             message) proc)
+      (message "current-buffer: %s" (current-buffer))
       (setf (local haxe-message-state) 'out)
       (cond
        ((null input)
@@ -436,7 +445,7 @@ This function is bound to \\[haxe-connect-to-compiler-server]"
         (setf reconnects 0
               (local haxe-network-idle-timer)
               (run-with-idle-timer (* 2 haxe-times-to-reconnect)
-                                   t #'haxe-network-tick)))))
+                                   t #'haxe-network-tick))) con))
 
 (defun haxe-send-to-server ()
   "Sends the substring `haxe-compiler-in-start' to
@@ -500,6 +509,36 @@ from RESPONSE."
           (local haxe-compiler-in-end) (point-min)
           (local haxe-compiler-out-end) (point-min))))
 
+(defun haxe--make-buffer-and-process (compiler host port)
+  (message "haxe--make-buffer-and-process: %s, %s, %s" compiler host port)
+  (let* ((new-buffer
+          (get-buffer-create
+           (generate-new-buffer-name
+            " *haxe-waiting-server*")))
+         (proc (start-process compiler new-buffer compiler
+                              "--wait" 
+                              (format "%s:%d" host port))))
+    (bury-buffer new-buffer)
+    (cons new-buffer proc)))
+
+(defun haxe--create-default-connection (proc)
+  (let ((buff
+         (switch-to-buffer
+          (get-buffer-create
+           (generate-new-buffer-name
+            "*haxe-interactive-server*")))))
+    (haxe-compiler-mode)
+    (push (make-instance 'haxe-connection
+                         :compiler haxe-compiler-default
+                         :host haxe-host-default
+                         :port haxe-port-default
+                         :process proc
+                         :filter #'haxe-listen-filter
+                         :sentinel #'haxe-network-process-sentinel
+                         :buffers (list buff)
+                         :interactive-buffer buff)
+          haxe-connections) buff))
+
 ;;;###autoload
 (defun haxe-start-waiting-server (&optional restart compiler host port)
   "Starts HaXe `haxe-compiler' on `haxe-server-host':`haxe-server-port'
@@ -519,47 +558,42 @@ This function is bound to \\[haxe-start-waiting-server]"
          (port-i
           (read-number "HaXe server port: " haxe-port-default)))
      (list nil compiler-i host-i port-i)))
-  (unless (called-interactively-p 'interactive)
+  (if (called-interactively-p 'interactive)
+      ;; TODO: must remember to kill process before restarting.
+      (destructuring-bind (new-buffer . proc)
+          (haxe--make-buffer-and-process compiler host port)
+        (if (not restart)
+            (haxe--create-default-connection proc)
+          (with-slots (compiler host port process)
+              (haxe--connection-for-buffer (current-buffer))
+            (haxe-log 0 "restarted server and reset the process")
+            (setq compiler compiler
+                  host host
+                  port port
+                  process proc))))
     (let ((con (haxe--connection-for-buffer (current-buffer))))
-      (unless compiler
-        (setq compiler
-              (or (oref con compiler) haxe-compiler-default)))
-      (unless host
-        (setq host (or (oref con host) haxe-host-default)))
-      (unless port
-        (setq port (or (oref con port) haxe-port-default)))))
-  ;; TODO: must remember to kill process before restarting.
-  (let* ((new-buffer
-          (get-buffer-create
-           (generate-new-buffer-name
-            " *haxe-waiting-server*")))
-         (proc (start-process compiler new-buffer compiler
-                              "--wait" 
-                              (format "%s:%d" host port))))
-    (bury-buffer new-buffer)
-    (if (not restart)
-        (let ((buff
-               (switch-to-buffer
-                (get-buffer-create "*haxe-interactive-server*"))))
-          (haxe-compiler-mode)
-          (push (make-instance 'haxe-connection
-                               :compiler compiler
-                               :host host
-                               :port port
-                               :process proc
-                               :filter #'haxe-listen-filter
-                               :sentinel #'haxe-network-process-sentinel
-                               :buffers (list buff))
-                haxe-connections)
-          (message "======= new connection created ===="))
-      (with-slots (compiler host port process)
-          (haxe--connection-for-buffer (current-buffer))
-        (message "restarted and reset the process")
-        (setq compiler compiler
-              host host
-              port port
-              process proc)))
-    (haxe-connect-to-compiler-server)))
+      ;; If connection is nil, then we must've been started in
+      ;; a "wrong" buffer, i.e. non-interactively, perhaps from a
+      ;; *.hx file opened for editing. We then need to create a new
+      ;; buffer and associate a connection with it.
+      (message "called non-interactively: %s, %s, %s"
+               haxe-compiler-default
+               haxe-host-default haxe-port-default)
+      (if con
+          (progn
+            (unless compiler
+              (setq compiler
+                    (or (oref con compiler) haxe-compiler-default)))
+            (unless host
+              (setq host (or (oref con host) haxe-host-default)))
+            (unless port
+              (setq port (or (oref con port) haxe-port-default))))
+        (destructuring-bind (new-buffer . proc)
+            (haxe--make-buffer-and-process
+             haxe-compiler-default
+             haxe-host-default haxe-port-default)
+          (haxe--create-default-connection proc)))))
+  (haxe-connect-to-compiler-server))
 
 (defun haxe-server-cleanup-hook ()
   "The hook that runs after the buffer with the process is closed

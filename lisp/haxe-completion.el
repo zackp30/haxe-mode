@@ -202,46 +202,47 @@ find nothing and return nil."
   "This function is called by `auto-complete' when it starts autocompleting"
   (message "haxe-ac-init")
   (let ((old-proc (get-process haxe-compiler-process)))
-    (when (or (not old-proc)
-              (not (equal (process-status old-proc) 'open)))
-      (setq haxe-network-process nil)
-      (haxe-connect-to-compiler-server)
-      (sleep-for 1)
-      (setq old-proc (get-process haxe-compiler-process)))
-    (let ((ac-request
-           (haxe-build-compile-string
-            (haxe-package)
-            (progn
-              (haxe-ensure-completion-file)
-              (haxe--relative-path (buffer-file-name))))))
-      (setq haxe-last-ac-candidates nil
-            haxe-last-ac-candidates-filtered nil
-            haxe-last-compiler-response nil
-            haxe-received-status 2)
-      (clrhash haxe-documentation-hash)
-      (process-send-string old-proc ac-request)
-      (process-send-string old-proc "\000")
-      (process-send-eof old-proc)
-      (message "sent to process: <%s>" ac-request)
-      (haxe-log 3 "haxe-ac-init sent request: %s\n completing: %s"
-                ac-request
-                (substring (buffer-string)
-                           (max (point-min) (- (point) 10))
-                           (point))))
-    (with-local-quit
-      (with-timeout
-          (5 (haxe-log 0 "Failing to fetch all completion options, giving up"))
-        (while (not haxe-last-ac-candidates)
-          (accept-process-output old-proc)
-          (haxe-log 3 "statsus: %s"
-                    (when haxe-last-compiler-response
-                      (concat
-                       (substring haxe-last-compiler-response
-                                  0 (min (length haxe-last-compiler-response) 42)) "...")))
-          (when (and haxe-last-compiler-response (= haxe-received-status 2))
-            (if (string= haxe-response-terminator "</list>\n")
-                (haxe-parse-ac-response haxe-last-compiler-response)
-              (haxe-parse-hint-response haxe-last-compiler-response)))))))
+    ;; (when (or (not old-proc)
+    ;;           (not (equal (process-status old-proc) 'open)))
+    ;;   (setq haxe-network-process nil)
+    ;;   (haxe-connect-to-compiler-server)
+    ;;   (sleep-for 1)
+    ;;   (setq old-proc (get-process haxe-compiler-process)))
+    ;; (let ((ac-request
+    ;;        (haxe-build-compile-string
+    ;;         (haxe-package)
+    ;;         (progn
+    ;;           (haxe-ensure-completion-file)
+    ;;           (haxe--relative-path (buffer-file-name))))))
+    ;;   (setq haxe-last-ac-candidates nil
+    ;;         haxe-last-ac-candidates-filtered nil
+    ;;         haxe-last-compiler-response nil
+    ;;         haxe-received-status 2)
+    ;;   (clrhash haxe-documentation-hash)
+    ;;   (process-send-string old-proc ac-request)
+    ;;   (process-send-string old-proc "\000")
+    ;;   (process-send-eof old-proc)
+    ;;   (message "sent to process: <%s>" ac-request)
+    ;;   (haxe-log 3 "haxe-ac-init sent request: %s\n completing: %s"
+    ;;             ac-request
+    ;;             (substring (buffer-string)
+    ;;                        (max (point-min) (- (point) 10))
+    ;;                        (point))))
+    ;; (with-local-quit
+    ;;   (with-timeout
+    ;;       (5 (haxe-log 0 "Failing to fetch all completion options, giving up"))
+    ;;     (while (not haxe-last-ac-candidates)
+    ;;       (accept-process-output old-proc)
+    ;;       (haxe-log 3 "statsus: %s"
+    ;;                 (when haxe-last-compiler-response
+    ;;                   (concat
+    ;;                    (substring haxe-last-compiler-response
+    ;;                               0 (min (length haxe-last-compiler-response) 42)) "...")))
+    ;;       (when (and haxe-last-compiler-response (= haxe-received-status 2))
+    ;;         (if (string= haxe-response-terminator "</list>\n")
+    ;;             (haxe-parse-ac-response haxe-last-compiler-response)
+    ;;           (haxe-parse-hint-response haxe-last-compiler-response))))))
+    )
   haxe-last-ac-candidates)
 
 (defun haxe-build-compile-string (pkg temp-file)

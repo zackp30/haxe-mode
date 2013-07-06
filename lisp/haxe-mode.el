@@ -864,7 +864,9 @@ with HaXe macro metadata." nil)
    '("^\\([^: ]+\\):\\([0-9]+\\): characters \\([0-9]+\\)-[0-9]+ : "
      1 2 3))
   (flymake-log 3 "HaXe flymake installed")
-  (haxe-start-waiting-server)
+  (save-window-excursion
+    (let ((con (haxe-start-waiting-server)))
+      (oset con project haxe-current-project)))
   ;; FIXME: This looks like it has to happen after we are connected
   ;; to the server the server start asynchronously
   (let* ((key "\\.hx\\'")
@@ -908,18 +910,19 @@ the command to run, and a list of arguments.  The resulting command is like:
   ;; creating another process. This would also allow us to manage all
   ;; communication with compiler in one place.
   (save-buffer)
-  (haxe-with-connection-project
-   (con (compiler host port) haxe-current-project)
-   (list compiler
-         (append
-          (list
-           "--connect"
-           (concat host ":" (number-to-string port)))
-          (haxe-build-flymake-list
-           (haxe-replace-all
-            (substring
-             (file-name-sans-extension (buffer-file-name))
-             (+ (length (haxe-resolve-project-root)) 5)) [?/] [?.]))))))
+  (let ((file-name
+         (haxe-resolve-project-source
+          haxe-current-project (buffer-file-name))))
+    (haxe-with-connection-project
+        (con (compiler host port) haxe-current-project)
+        (list compiler
+              (append
+               (list
+                "--connect"
+                (concat host ":" (number-to-string port)))
+               (haxe-build-flymake-list
+                (haxe-replace-all
+                 (file-name-sans-extension file-name) "/" ".")))))))
 
 (defun haxe-flymake-cleanup ()
   "Called by flymake when it needs to cleanup after reporting"
@@ -952,7 +955,14 @@ so that it doesn't kill our files..."
   (around haxe-override-flymake-change (start stop len))
   "Overrides `flymake-after-change-function' to prevent it from running
 when autocompletion is in progress"
-  (unless (= 2 haxe-received-status) ad-do-it))
+  ;; haxe-received-status is some variable meant for deletion
+  ;; While we only run flymake on save, it is save to do it, but
+  ;; if we will try to run it upon newlines and such, we'll get
+  ;; in trouble because as of now, we save the buffer before
+  ;; running flymake, and this will invoke it recurisively causing
+  ;; flymake-check-start-time to be nil and fail some arithmetics.
+  ;; (unless (= 2 haxe-received-status) ad-do-it)
+  )
 
 (defun haxe-kill-network-process ()
   "Kill connection to HaXe compiler server and Flymake process in this buffer"
@@ -1089,13 +1099,12 @@ Key bindings:
   ;; (local-set-key "." haxe-completion-method)
   (local-set-key "(" 'haxe-hint-paren)
   (local-set-key (kbd "C-c h") 'haxe-electric-help)
-  (setq flymake-log-level 0)
+  (setq flymake-log-level 3)
   ;; Here we should start setting up the connection.
   (haxe-identify-project-root)
   ;; Should already know enough to start the connection.
-  (save-window-excursion
-    (haxe-start-waiting-server))
-  ;; Now, can initialize flymake (HaXe server must be running already)
+  ;; Now, can initialize flymake
+  ;; (this will also start HaXe waiting server)
   (haxe-flymake-install)
   (if haxe-current-project
       (haxe-with-connection-project

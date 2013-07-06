@@ -163,7 +163,8 @@ directory"
         (when maybe-ede-project
           ;; TODO: There are more useful things we need to set here,
           ;; once we have ede project
-          (setq haxe-project-root (oref maybe-ede-project directory)
+          (setq haxe-current-project maybe-ede-project
+                haxe-project-root (oref maybe-ede-project directory)
                 haxe-build-hxml
                 (concat (oref maybe-ede-project configuration-default) ".hxml")
                 haxe-compiler-default (oref maybe-ede-project compiler)
