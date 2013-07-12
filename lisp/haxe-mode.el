@@ -853,10 +853,6 @@ with HaXe macro metadata." nil)
   "The location of HaXe built-ins, it is needed for TAGS generation"
   :type 'string :group 'haxe-mode)
 
-;; (defvar old-flymake-after-change-function nil
-;;   "Stores the function flymake uses to update after code change
-;; once we turn it off")
-
 (defun haxe-flymake-install ()
   "Install flymake stuff for HaXe files."
   (add-to-list
@@ -875,26 +871,20 @@ with HaXe macro metadata." nil)
         (setcdr haxeentry '(haxe-flymake-init haxe-flymake-cleanup))
       (add-to-list
        'flymake-allowed-file-name-masks
-       (list key 'haxe-flymake-init 'haxe-flymake-cleanup)))))
+       (list key 'haxe-flymake-init 'haxe-flymake-cleanup 'haxe-get-real-file-name)))))
+
+(defun haxe-get-real-file-name (fake-name)
+  "Helper function for flymake: flymake needs to know what's the real
+name of the file was that we have requested the check"
+  (haxe-path-from-flymake-path haxe-current-project fake-name))
 
 (defun haxe-flymake-init ()
   "initialize flymake for HaXe."
-  (message "haxe-flymake-init completion-requested %s" haxe-completion-requested)
   (unless haxe-completion-requested
-    (let ((create-temp-f 'haxe-flymake-create-temp-intemp)
-          (use-relative-base-dir nil)
-          (use-relative-source nil)
-          (get-cmdline-f 'haxe-flymake-get-cmdline)
-          args
-          temp-source-file-name)
-      (haxe-log 3 "Flymake HaXe init")
-      (setq temp-source-file-name
-            (flymake-init-create-temp-buffer-copy create-temp-f)
-            args (flymake-get-syntax-check-program-args
-                  temp-source-file-name (haxe-resolve-project-root)
-                  use-relative-base-dir use-relative-source
-                  get-cmdline-f))
-      args)))
+    (haxe-log 3 "Flymake HaXe init")
+    (flymake-get-syntax-check-program-args
+     (buffer-file-name) (haxe-resolve-project-root)
+     nil nil 'haxe-flymake-get-cmdline)))
 
 (defun haxe-flymake-get-cmdline (source base-dir)
   "Gets the cmd line for running a flymake session in a HaXe buffer.
@@ -909,10 +899,8 @@ the command to run, and a list of arguments.  The resulting command is like:
   ;; reusing the connection to the server instead of going through
   ;; creating another process. This would also allow us to manage all
   ;; communication with compiler in one place.
-  (save-buffer)
   (let ((file-name
-         (haxe-resolve-project-source
-          haxe-current-project (buffer-file-name))))
+         (haxe-flymake-source haxe-current-project (current-buffer))))
     (haxe-with-connection-project
         (con (compiler host port) haxe-current-project)
         (list compiler
@@ -922,7 +910,7 @@ the command to run, and a list of arguments.  The resulting command is like:
                 (concat host ":" (number-to-string port)))
                (haxe-build-flymake-list
                 (haxe-replace-all
-                 (file-name-sans-extension file-name) "/" ".")))))))
+                 (file-name-sans-extension file-name) "/" ".") t))))))
 
 (defun haxe-flymake-cleanup ()
   "Called by flymake when it needs to cleanup after reporting"
@@ -939,20 +927,60 @@ so that it doesn't kill our files..."
 ;; Ritchie Turner (blackdog@cloudshift.cl)
 ;; remake of https://github.com/cloudshift/hx-emacs/blob/master/hxc-complete.el
 
-(defun haxe-build-flymake-list (source)
-  "Builds the command run by flymake on the current buffer"
+(defun haxe-build-flymake-list (source &optional flymake)
+  "Builds the command run by flymake on the current buffer.
+If FLYMAKE is not `nil', then this will produce a source path for flymake:
+that is this path will put as -cp a flymake special directory rather then
+the actual source."
   (let ((conditionals (haxe-conditional-comps))
         (result
          (append
           (haxe-build-cwd)
-          (haxe-read-hxml)
+          (haxe-read-hxml flymake)
           (list source))))
     (if conditionals
         (append conditionals result)
       result)))
 
+(defadvice flymake-process-sentinel
+  (around haxe+flymake-process-sentinel (process event))
+  (when (memq (process-status process) '(signal exit))
+    (let* ((exit-status       (process-exit-status process))
+           (command           (process-command process))
+           (source-buffer     (process-buffer process))
+           (cleanup-f         (flymake-get-cleanup-function (buffer-file-name source-buffer))))
+
+      (flymake-log 2 "process %d exited with code %d"
+                   (process-id process) exit-status)
+      (when (eql major-mode 'haxe-mode)
+        ;; When there is a syntax error haxe will exit with non-zero code
+        ;; but we don't care if that's the case.
+        (setf exit-status 0))
+      (condition-case err
+          (progn
+            (flymake-log 3 "cleaning up using %s" cleanup-f)
+            (when (buffer-live-p source-buffer)
+              (with-current-buffer source-buffer
+                (funcall cleanup-f)))
+
+            (delete-process process)
+            (setq flymake-processes (delq process flymake-processes))
+
+            (when (buffer-live-p source-buffer)
+              (with-current-buffer source-buffer
+
+                (flymake-parse-residual)
+                (flymake-post-syntax-check exit-status command)
+                (setq flymake-is-running nil))))
+        (error
+         (let ((err-str (format "Error in process sentinel for buffer %s: %s"
+                                source-buffer (error-message-string err))))
+           (flymake-log 0 err-str)
+           (with-current-buffer source-buffer
+             (setq flymake-is-running nil))))))))
+
 (defadvice flymake-after-change-function
-  (around haxe-override-flymake-change (start stop len))
+  (around haxe+flymake-after-change-function (start stop len))
   "Overrides `flymake-after-change-function' to prevent it from running
 when autocompletion is in progress"
   ;; haxe-received-status is some variable meant for deletion
@@ -962,20 +990,18 @@ when autocompletion is in progress"
   ;; running flymake, and this will invoke it recurisively causing
   ;; flymake-check-start-time to be nil and fail some arithmetics.
   ;; (unless (= 2 haxe-received-status) ad-do-it)
-  )
+  ad-do-it)
 
 (defun haxe-kill-network-process ()
   "Kill connection to HaXe compiler server and Flymake process in this buffer"
   (when (equal major-mode 'haxe-mode)
-    (let ((proc (get-process haxe-compiler-process))
-	  (fly-proc (get-buffer-process (buffer-name))))
+    (let ((fly-proc (get-buffer-process (buffer-name))))
+      (haxe-stop-waiting-server-if-needed
+       haxe-current-project (buffer-file-name))
       (when fly-proc
 	(flymake-mode -1)
 	(delete-process fly-proc)
-	(haxe-log 3 "Flymake process killed"))
-      (when proc
-	(delete-process proc)
-	(haxe-log 3 "Disconnecting from HaXe compiler server")))))
+	(haxe-log 3 "Flymake process killed")))))
 
 (when (featurep 'speedbar)
   (make-local-variable 'speedbar-dynamic-tags-function-list)
@@ -1123,6 +1149,7 @@ Key bindings:
   (setq tags-case-fold-search nil)
   (flymake-mode)
   (ad-activate 'flymake-after-change-function)
+  (ad-activate 'flymake-process-sentinel)
   (ad-activate 'c-forward-annotation)
   (ad-activate 'c-forward-decl-or-cast-1)
   (ad-activate 'c-beginning-of-macro)

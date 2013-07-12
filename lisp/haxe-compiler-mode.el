@@ -73,9 +73,8 @@ server and tries to bring it up, if it was broken")
 (defvar haxe-max-responses 100
   "The number of responses from the compiler server to keep in cache")
 
-(defconst haxe-compiler-process "haxe-server"
-  "The name given to the HaXe compiler process when started by automake
-or auto-completion")
+(defconst haxe-network-connection "haxe-connection"
+  "The name given to the process conneting to Haxe waiting server")
 
 (defconst haxe-times-to-reconnect 10
   "How many times should the idle timer try to reconnect before considering
@@ -97,8 +96,7 @@ the connection to be dead")
           (define-key map [remap self-insert-command]
             #'haxe-insert-conditionally)
           (define-key map "\C-c\C-c" #'haxe-send-to-server)
-          (define-key map "\C-c\C-r" #'haxe-reconnect)
-          (define-key map "\C-c\C-o" #'haxe-compier-clear)
+          (define-key map "\C-c\C-o" #'haxe-compier-clean)
           map)))
 
 (defvar haxe-connections nil
@@ -167,38 +165,23 @@ the second is for paren hint")
                :type (or null process)
                :documentation
                "The connection created to this instance of server.")
-   (reconnects :initform 0
-               :type integer
-               :documentation
-               "How many times this connection has tried to reconnect.")
-   (connection-state
-    :initform 'off
-    :type symbol
-    :documentation "The state of this connection, possible values are:
-- off (not connected)
-- error (tried to connect and failed)
-- open (connection established, idle)
-- busy (connection established, communicating with the server).")
-   (receive-state
-    :initform 'nothing
-    :type symbol
-    :documentation "When receiving messages form server this slot can be:
-- nothing (nothing received yet)
-- junk (received input, but couldn't decipher it)
-- incomplete (receiving a valid message, but not all parts received yet)
-- full (finished receiving message).")
-   (message :initform nil
+   (request :initform nil
             :type (or null string)
-            :documentation "The message received from server.")
+            :documentation "The message sent to server.")
    (expected-prefix :initform nil
                     :type (or nil string)
                     :documentation "The prefix we expect from compiler server.")
    (expected-suffix :initform nil
                     :type (or nil string)
                     :documentation "The suffix we expect from compiler server.")
-   (request :initform nil
+   (response :initform nil
             :type (or null string)
-            :documentation "The requiest sent to server.")
+            :documentation "The response received from server.")
+   (response-handlers
+    :initform nil
+    :type list
+    :documentation "Callbacks to invoke once the message from server is received,
+Callbacks will receive one argument, this argument being the message received.")
    (project :intiarg :project
             :initform nil
             :type (or symbol haxe-ede-project)
@@ -228,6 +211,17 @@ so this is not a one to one correspondence.")
   :allow-nil-initform t
   :documentation
   "This class describes the shared connection to the HaXe compiler server")
+
+(defmethod haxe-handle-server-response ((this haxe-connection))
+  (loop for handler in (oref this response-handlers) do
+        (funcall handler (oref this response)))
+  (oset this response ""))
+
+(defmethod haxe-add-connection-handler ((this haxe-connection) handler)
+  (oset this response-handlers (cons handler (oref this response-handlers))))
+
+(defmethod haxe-remove-connection-handler ((this haxe-connection) handler)
+  (oset this response-handlers (remove handler (oref this response-handlers))))
 
 (defmacro haxe-with-connection (spec &rest body)
   "Similar to `with-slots', but will search for the connection object in the
@@ -275,39 +269,9 @@ used to identify the connection."
   ;; We are only interested in recording the completion XMLs
   (message "filter <%s>" input)
   (haxe-with-connection-process
-      (con (receive-state
-            expected-prefix
-            expected-suffix
-            message) proc)
+      (con (expected-prefix expected-suffix request response) proc)
       (message "current-buffer: %s" (current-buffer))
-      (setf (local haxe-message-state) 'out)
-      (cond
-       ((null input)
-        (haxe-log 3 "HaXe compiler sends no input")
-        (when (eql receive-state 'incomplete)
-          (setq message "<noop/>"
-                haxe-completion-requested nil)))
-       ((and (eql receive-state 'nothing)
-             (haxe-string-starts-with input expected-prefix))
-        (setq receive-state
-              (if (haxe-string-ends-with input expected-suffix)
-                  'finished 'incomplete)
-              message input))
-       ((eql receive-state 'incomplete)
-        (setq message (concat message input))
-        (when (haxe-string-ends-with input expected-suffix)
-          (setq receive-state 'finished)))
-       ;; We should only get here when compiler started to reply
-       ;; with something that doesn't look like the XML we expect.
-       ((eql receive-state 'nothing)
-        (setf (local haxe-message-state) 'error)
-        (haxe-log 3 "Compiler reported error: <%s>" input)
-        (setq message (concat "<error>" input "</error>")
-              receive-state 'junk))
-       (t (error "Filter was in <%s> state, but received: <%s>"
-                 receive-state input)))
-    (haxe-append-server-response message)
-    (setf (local haxe-message-state) 'composing)))
+      (setf response (concat response input))))
 
 (defun haxe-network-process-sentinel (process input)
   "This function is used for monitoring the TCP connection established
@@ -315,53 +279,21 @@ between HaXe compilation server and some buffer."
   (message "haxe-network-process-sentinel <%s>" input)
   (when (stringp input)
     (haxe-with-connection-process
-        (con (connection-state reconnects) process)
-        (setf (local haxe-message-state) 'out)
-      (cond
-       ((or
-         (haxe-string-starts-with input "failed with code")
-         (haxe-string-starts-with input "connection broken by"))
-        (setf (local haxe-message-state) 'error)
-        (haxe-append-server-response 
-         (concat "<error>" input "</error>"))
-        (setq connection-state 'error))
-       ((haxe-string-starts-with input "open")
-        (setq connection-state 'open reconnects 0)
-        (haxe-append-server-response "<open/>"))
-       ((haxe-string-starts-with input "deleted")
-        (setq connection-state 'off)
-        (haxe-append-server-response "<deleted/>"))
-       (t (setq connection-state 'open reconnects 0)
-          (haxe-append-server-response 
-           (concat "<" (or (car (split-string input "[^[:alnum:]]"))
-                           "noop") "/>"))))
-      (setf (local haxe-message-state) 'composing))))
-
-(defun haxe-network-tick ()
-  "This is a timer handler function it looks after the connection
-established to HaXe compilation server and tries to restore it
-if it failed before."
-  (haxe-with-connection
-      (con (reconnects connection-state process connection))
-      (message ">>>>>>>>>>>>>timer check in %d, %s | %s and %s"
-               reconnects connection-state
-               (when process (process-status process))
-               (when connection (process-status connection)))
-      (when (and (< reconnects haxe-times-to-reconnect)
-                 (or (eql connection-state 'error)
-                     (not process)
-                     (not (eql 'run (process-status process)))
-                     (not connection)
-                     (not (member (process-status connection)
-                                  '(connect open)))))
-        (when process
-          (delete-process process)
-          (setq process nil))
-        (when connection
-          (delete-process connection)
-          (setq connection nil))
-        (incf reconnects)
-        (haxe-start-waiting-server t))))
+        (con (response interactive-buffer) process)
+        (cond
+         ((haxe-string-starts-with input "connection broken by")
+          ;; Compiler sent the entire message, or broke.
+          ;; Let's assume it's the entire message - worst case
+          ;; the user will restart the waiting server.
+          (haxe-append-server-response response :response)
+          (haxe-handle-server-response con))
+         ((haxe-string-starts-with input "failed with code")
+          (haxe-append-server-response input :error)
+          (error "There was a communication error: \"%s\",
+switch to %s buffer to see more details" input interactive-buffer))
+         (t                             ; Keep collecting incoming
+                                        ; messages
+          (haxe-append-server-response input :technical))))))
 
 (defun haxe--connection-for-buffer (buffer)
   "A helper function for `haxe-with-connection' macro, locates
@@ -389,63 +321,21 @@ the `haxe-connection' object."
         for found = (when (eql (oref con project) project) con)
         do (when found (return found))))
 
-(defun haxe-reconnect ()
-  "Tries to restart the connection previously established in the current
-buffer to HaXe compiler.
-This function is bound to \\[haxe-reconnect]"
-  (interactive)
+(defun haxe-do-send-to-server (message)
   (haxe-with-connection
-      (con (process
+      (con (connection request filter sentinel host port))
+      (setq request (concat message "\000")
             connection
-            reconnects connection-state message receive-state))
-      (setq reconnects 0 connection-state 'off)
-      (when process
-        (delete-process process)
-        (setq process nil))
-    (when connection
-      (delete-process connection)
-      (setq connection nil))
-    (setq message nil receive-state 'nothing))
-  (haxe-start-waiting-server t))
-
-;;;###autoload
-(defun haxe-connect-to-compiler-server ()
-  "Starts HaXe compilations server and connects to it.
-This function is bound to \\[haxe-connect-to-compiler-server]"
-  (interactive)
-  (haxe-with-connection
-      (con (connection
-            filter sentinel host port
-            connection-state reconnects))
-      (unless (and connection (equal (process-status connection) 'open))
-        (haxe-log 3 "Trying to connect to HaXe compiler on %s:%s" host port)
-        (while (and
-                (not (eql connection-state 'open))
-                (< reconnects haxe-times-to-reconnect))
-          (when connection (delete-process connection))
-          (setq connection
-                (make-network-process
-                 :name haxe-compiler-process
+            (make-network-process
+                 :name haxe-network-connection
                  :family 'ipv4
                  :host host
-                 :nowait t
+                 ;; :nowait t
                  :service port
                  ;; :buffer haxe-network-process-buffer
                  :filter filter
                  :sentinel sentinel))
-          (message "******************* Something's very wrong: %d %s"
-                   reconnects connection-state)
-          (incf reconnects)
-          (sleep-for 1))
-        (haxe-log 3 (if (eql connection-state 'open)
-                        "Connected to HaXe compiler"
-                      "Connection to HaXe compiler failed permanently."))
-        (when (getlocal haxe-network-idle-timer)
-          (cancel-timer (getlocal haxe-network-idle-timer)))
-        (setf reconnects 0
-              (local haxe-network-idle-timer)
-              (run-with-idle-timer (* 2 haxe-times-to-reconnect)
-                                   t #'haxe-network-tick))) con))
+      (process-send-string connection request)))
 
 (defun haxe-send-to-server ()
   "Sends the substring `haxe-compiler-in-start' to
@@ -465,18 +355,8 @@ This function is bound to \\[haxe-connect-to-compiler-server]"
     (let ((inhibit-read-only t))
       (kill-region start end))
     (goto-char (point-max))
-    (setf (local haxe-message-state) 'out)
-    (haxe-with-connection
-        (con (connection request))
-        (setq request message)
-        (process-send-string connection request))
-    (setf (local haxe-message-state) 'in)
-    (haxe-compiler-insert
-     "\n<request><![CDATA[[" message "]]></request>")
-    (setf (local haxe-message-state) 'composing)
-    (haxe-compiler-insert haxe-ps "\n")
-    (put-text-property
-     (- (point-max) 2) (1- (point-max)) 'invisible t)
+    (haxe-do-send-to-server message)
+    (haxe-compiler-insert :request message)
     (goto-char (point-max))
     (setf (local haxe-compiler-in-end) (point-max)
           (local haxe-compiler-in-start) (point-max))))
@@ -488,19 +368,17 @@ from RESPONSE."
     (loop for i across response
           do (when (>= i ?\ ) (write-char i)))))
 
-(defun haxe-append-server-response (response)
+(defun haxe-append-server-response (response &optional how)
   "Appends HaXe server response to the current buffer."
   (goto-char (point-max))
-  (haxe-compiler-insert (haxe--sanitize-response response))
-  (setf (local haxe-message-state) 'composing)
-  (haxe-compiler-insert haxe-ps "\n")
+  (haxe-compiler-insert how (haxe--sanitize-response response))
   (put-text-property
    (- (point-max) 2) (1- (point-max)) 'invisible t)
   (goto-char (point-max))
   (setf (local haxe-compiler-in-start) (point)
         (local haxe-compiler-in-end) (point)))
 
-(defun haxe-compier-clear ()
+(defun haxe-compier-clean ()
   (interactive)
   (let ((inhibit-read-only t))
     (erase-buffer)
@@ -518,10 +396,9 @@ from RESPONSE."
          (proc (start-process compiler new-buffer compiler
                               "--wait" 
                               (format "%s:%d" host port))))
-    (bury-buffer new-buffer)
-    (cons new-buffer proc)))
+    (bury-buffer new-buffer) new-buffer))
 
-(defun haxe--create-default-connection (proc)
+(defun haxe--create-default-connection ()
   (let ((buff
          (switch-to-buffer
           (get-buffer-create
@@ -532,12 +409,12 @@ from RESPONSE."
                          :compiler haxe-compiler-default
                          :host haxe-host-default
                          :port haxe-port-default
-                         :process proc
                          :filter #'haxe-listen-filter
                          :sentinel #'haxe-network-process-sentinel
                          :buffers (list buff)
                          :interactive-buffer buff)
-          haxe-connections) buff))
+          haxe-connections)
+    (car haxe-connections)))
 
 ;;;###autoload
 (defun haxe-start-waiting-server (&optional restart compiler host port)
@@ -560,17 +437,15 @@ This function is bound to \\[haxe-start-waiting-server]"
      (list nil compiler-i host-i port-i)))
   (if (called-interactively-p 'interactive)
       ;; TODO: must remember to kill process before restarting.
-      (destructuring-bind (new-buffer . proc)
-          (haxe--make-buffer-and-process compiler host port)
+      (let ((new-buffer (haxe--make-buffer-and-process compiler host port)))
         (if (not restart)
-            (haxe--create-default-connection proc)
-          (with-slots (compiler host port process)
-              (haxe--connection-for-buffer (current-buffer))
-            (haxe-log 0 "restarted server and reset the process")
-            (setq compiler compiler
-                  host host
-                  port port
-                  process proc))))
+            (haxe--create-default-connection)
+          (let ((con (haxe--connection-for-buffer (current-buffer))))
+            (with-slots (compiler host port) con
+              (haxe-log 0 "restarted server and reset the process")
+              (setq compiler compiler
+                    host host
+                    port port)))))
     (let ((con (haxe--connection-for-buffer (current-buffer))))
       ;; If connection is nil, then we must've been started in
       ;; a "wrong" buffer, i.e. non-interactively, perhaps from a
@@ -587,13 +462,12 @@ This function is bound to \\[haxe-start-waiting-server]"
             (unless host
               (setq host (or (oref con host) haxe-host-default)))
             (unless port
-              (setq port (or (oref con port) haxe-port-default))))
-        (destructuring-bind (new-buffer . proc)
-            (haxe--make-buffer-and-process
-             haxe-compiler-default
-             haxe-host-default haxe-port-default)
-          (haxe--create-default-connection proc)))))
-  (haxe-connect-to-compiler-server))
+              (setq port (or (oref con port) haxe-port-default))) con)
+        (let ((new-buffer
+               (haxe--make-buffer-and-process
+                haxe-compiler-default
+                haxe-host-default haxe-port-default)))
+          (haxe--create-default-connection))))))
 
 (defun haxe-server-cleanup-hook ()
   "The hook that runs after the buffer with the process is closed
@@ -616,40 +490,28 @@ remove orhpan connection objects."
                 (remove-if (lambda (x) (eql x con))
                            haxe-connections))))))
 
-;; (defun haxe-before-change-hook (start end)
-;;   (message "haxe-before-change-hook")
-;;   (unless (< start (getlocal haxe-compiler-in-start))
-;;     (error "Can't modify the message you already sent")))
-
-;; (defun haxe-after-change-hook (start end length)
-;;   (message "haxe-after-change-hook")
-;;   (when (>= length 0)
-;;     (put-text-property
-;;      start end 'face
-;;      (if (eql (getlocal haxe-communication-state) 'in)
-;;          'haxe-compiler-pending 'haxe-compiler-out))))
-
-(defun haxe-compiler-insert (&rest strings)
+(defun haxe-compiler-insert (how &rest strings)
   "Works like a regular insert, except it will also take care of
 read-only attribute and applying the proper face."
-  (let ((face 
-         (cond
-          ((eql (getlocal haxe-message-state) 'composing)
-           'haxe-face-pending)
-          ((eql (getlocal haxe-message-state) 'in)
-           'haxe-face-in)
-          ((eql (getlocal haxe-message-state) 'out)
-           'haxe-face-out)
-          ((eql (getlocal haxe-message-state) 'error)
-           'haxe-face-error)))
-        (input (reduce #'concat strings))
-        (inhibit-read-only t)
-        (start (point)))
-    (insert input)
-    (message "haxe-compiler-insert inserts <%s>" input)
-    (unless (eql (getlocal haxe-message-state) 'composing)
-      (put-text-property start (+ start (length input)) 'read-only t))
-    (put-text-property start (+ start (length input)) 'face face)))
+  (let* (start
+         end
+         (face 
+          (cond
+           ((eql how :response)
+            (setf start "<response>" end "</response>")
+            'haxe-face-pending)
+           ((eql how :request)
+            (setf start "<request>" end "</request>")
+            'haxe-face-pending)
+           ((eql how :technical)
+            (setf start "<technical>" end "</technical>")
+            'haxe-face-in)
+           ((eql how :error)
+            (setf start "<error>" end "</error>")
+            'haxe-face-error)))
+         (input (reduce #'concat strings))
+         (inhibit-read-only t))
+    (insert start input end "\n")))
 
 (define-derived-mode haxe-compiler-mode fundamental-mode
   "Haxe Compiler interaction mode"

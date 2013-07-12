@@ -124,9 +124,11 @@ the `project-root'."
   (list "--cwd"
 	(concat (expand-file-name (haxe-resolve-project-root)))))
 
-(defun haxe-read-hxml ()
+(defun haxe-read-hxml (&optional flymake)
   "Reads the contents of `haxe-project-build-command'
 SEPARATOR is used to delimit lines read from the file"
+  ;; TODO: this entire thing should go, be replaced by some method specializing
+  ;; on `haxe-project'
   (with-temp-buffer
     (insert-file-contents
      (if (and haxe-build-hxml (haxe-resolve-project-root))
@@ -135,13 +137,17 @@ SEPARATOR is used to delimit lines read from the file"
     (delete-non-matching-lines "^-cp\\|^-lib\\|^-swf")
     (let (result pos)
       (dolist (i (delete-dups (split-string (buffer-string) haxe-eol)))
-	(setq pos (position " " i))
-	(if pos 
-	    (setq result (cons (substring i 0 pos) result)
-		  result (cons (substring i pos) result))
-	  (setq result (cons i result))))
+        (setq pos (position " " i))
+        (if pos 
+            (setq result (cons (substring i 0 pos) result)
+                  result (cons (substring i pos) result))
+          (setq result (cons i result))))
       (setq haxe-project-build-command (mapconcat #'identity result " "))
-      result)))
+      (if flymake
+          (append result
+           (list (concat "-cp " (oref haxe-current-project directory)
+                   (oref haxe-current-project flymake-dir))))
+        result))))
 
 (defun haxe-class-name (pkg)
   "Generates the fully qualified name of the HaXe class"

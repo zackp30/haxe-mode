@@ -135,6 +135,11 @@ ROOTPROJ is nil, since there is only one project."
                 :initform "./flymake"
                 :type string
                 :documentation "The directory where we should create temp files for Flymake")
+   (flymake-sources
+    :initarg :flymake-sources
+    :initform (make-hash-table :test 'equal)
+    :type hash-table
+    :documentation "Sources for flymake <original - flymake dummy>")
    (hxml :initarg :hxml
          :initform nil
          :type list
@@ -170,17 +175,34 @@ if there is no .haxeproject file."))))
           (return fn))
         finally (return absolute-path)))
 
-(defun haxe-ensure-file (file original)
+(defun haxe-ensure-file (file buffer)
   (make-directory (file-name-directory file) t)
-  (copy-file original file 'overwrite) file)
+  (when (file-exists-p file) (delete-file file))
+  (with-current-buffer buffer
+    (append-to-file (point-min) (point-max) file)) file)
 
-(defmethod haxe-flymake-source ((this haxe-ede-project) absolute-path)
-  (let ((project-root (file-name-directory (oref this file)))
-        (relative-path (haxe-resolve-project-source this absolute-path)))
+(defmethod haxe-flymake-source ((this haxe-ede-project) for-buffer)
+  (let* ((absolute-path (buffer-file-name for-buffer))
+         (project-root (file-name-directory (oref this directory)))
+         (relative-path (haxe-resolve-project-source this absolute-path)))
     ;; TODO: There's a function `haxe-ensure-completion-file' which has to
     ;; use this routine instead of what it does now...
-    (haxe-ensure-file
-     (concat project-root (oref this flymake-dir) relative-path)
-     absolute-path)))
+    (let ((flymake-dummy 
+           (haxe-ensure-file
+            (concat project-root (oref this flymake-dir) relative-path) for-buffer)))
+      (setf (gethash (buffer-file-name for-buffer)
+                     (oref this flymake-sources)) flymake-dummy))
+    relative-path))
+
+(defmethod haxe-path-from-flymake-path ((this haxe-ede-project) file)
+  (catch 'top
+    (maphash (lambda (k v) (when (string= v file) (throw 'top k)))
+             (oref this flymake-sources)) file))
+
+(defmethod haxe-stop-waiting-server-if-needed ((this haxe-ede-project) file)
+  ;; TODO: This will look for files open for this project and if
+  ;; the `file' is the last one (we are about to close it), then
+  ;; this will terminate the haxe waiting server too.
+  )
 
 (provide 'ede/haxe)
