@@ -187,6 +187,7 @@ if there is no .haxeproject file."))))
          (relative-path (haxe-resolve-project-source this absolute-path)))
     ;; TODO: There's a function `haxe-ensure-completion-file' which has to
     ;; use this routine instead of what it does now...
+    (message "haxe-flymake-source: %s" relative-path)
     (let ((flymake-dummy 
            (haxe-ensure-file
             (concat project-root (oref this flymake-dir) relative-path) for-buffer)))
@@ -195,9 +196,15 @@ if there is no .haxeproject file."))))
     relative-path))
 
 (defmethod haxe-path-from-flymake-path ((this haxe-ede-project) file)
+  (message "haxe-path-from-flymake-path %s" file)
   (catch 'top
     (maphash (lambda (k v) (when (string= v file) (throw 'top k)))
              (oref this flymake-sources)) file))
+
+(defmethod haxe-strip-flymake-dir ((this haxe-ede-project) file-name)
+  (replace-regexp-in-string
+   (format "^.*\\(:?\\./\\)?%s" (regexp-quote (oref this flymake-dir)))
+   "" file-name))
 
 (defmethod haxe-stop-waiting-server-if-needed ((this haxe-ede-project) file)
   ;; TODO: This will look for files open for this project and if

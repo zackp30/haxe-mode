@@ -855,6 +855,15 @@ with HaXe macro metadata." nil)
 
 (defun haxe-flymake-install ()
   "Install flymake stuff for HaXe files."
+  ;; TODO: It looks like Flymake will use a special variable to get
+  ;; the errors / warnings message, we should be planning ahead for
+  ;; plugging into it, rather then using the compile.el variables.
+  ;; regexp file-idx line-idx col-idx (optional) text-idx(optional), match-end to end of string is error text
+  ;; (if (boundp 'flymake-err-line-patterns)
+  ;;     (add-to-list
+  ;;      'flymake-err-line-patterns
+  ;;      '("^\\([^: ]+\\):\\([0-9]+\\): characters \\([0-9]+\\)-[0-9]+ : "
+  ;;        1 2 3)))
   (add-to-list
    'compilation-error-regexp-alist
    '("^\\([^: ]+\\):\\([0-9]+\\): characters \\([0-9]+\\)-[0-9]+ : "
@@ -868,10 +877,15 @@ with HaXe macro metadata." nil)
   (let* ((key "\\.hx\\'")
          (haxeentry (assoc key flymake-allowed-file-name-masks)))
     (if haxeentry
-        (setcdr haxeentry '(haxe-flymake-init haxe-flymake-cleanup))
+        (setcdr haxeentry
+                '(haxe-flymake-init
+                  haxe-flymake-cleanup
+                  haxe-get-real-file-name))
       (add-to-list
        'flymake-allowed-file-name-masks
-       (list key 'haxe-flymake-init 'haxe-flymake-cleanup 'haxe-get-real-file-name)))))
+       (list key 'haxe-flymake-init
+             'haxe-flymake-cleanup
+             'haxe-get-real-file-name)))))
 
 (defun haxe-get-real-file-name (fake-name)
   "Helper function for flymake: flymake needs to know what's the real
@@ -894,13 +908,10 @@ the command to run, and a list of arguments.  The resulting command is like:
   $ haxe `(haxe-resolve-project-root)'/`haxe-build-hxml'
 
 "
-  ;; FIXME: Need to reuse the .completion/ directory to avoid saving
-  ;; the current buffer. Also need to investigate the possiblity of
-  ;; reusing the connection to the server instead of going through
-  ;; creating another process. This would also allow us to manage all
-  ;; communication with compiler in one place.
   (let ((file-name
-         (haxe-flymake-source haxe-current-project (current-buffer))))
+         (haxe-strip-flymake-dir
+          haxe-current-project
+          (haxe-flymake-source haxe-current-project (current-buffer)))))
     (haxe-with-connection-project
         (con (compiler host port) haxe-current-project)
         (list compiler

@@ -1,4 +1,4 @@
-;; -*- mode: Lisp; -*-
+;; -*- mode: lisp; -*-
 
 ((compiler "haxe")
  (version "0.0")
