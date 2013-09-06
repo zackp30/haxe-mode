@@ -890,6 +890,8 @@ with HaXe macro metadata." nil)
 (defun haxe-get-real-file-name (fake-name)
   "Helper function for flymake: flymake needs to know what's the real
 name of the file was that we have requested the check"
+  (message "haxe-get-real-file-name: %s -> %s" fake-name
+           (haxe-path-from-flymake-path haxe-current-project fake-name))
   (haxe-path-from-flymake-path haxe-current-project fake-name))
 
 (defun haxe-flymake-init ()
@@ -916,9 +918,7 @@ the command to run, and a list of arguments.  The resulting command is like:
         (con (compiler host port) haxe-current-project)
         (list compiler
               (append
-               (list
-                "--connect"
-                (concat host ":" (number-to-string port)))
+               (list "--connect" (format "%s:%d" host port))
                (haxe-build-flymake-list
                 (haxe-replace-all
                  (file-name-sans-extension file-name) "/" ".") t))))))
@@ -952,6 +952,15 @@ the actual source."
     (if conditionals
         (append conditionals result)
       result)))
+
+;; Filed bugreport for this: http://debbugs.gnu.org/cgi/bugreport.cgi?bug=15184
+(defadvice flymake-get-real-file-name-function
+  (around haxe+flymake-get-real-file-name-function (file-name))
+  (message "advised flymake-get-real-file-name-function %s -> %s"
+           file-name (nth 2 (flymake-get-file-name-mode-and-masks file-name)))
+  (setf ad-return-value
+        (or (nth 2 (flymake-get-file-name-mode-and-masks file-name))
+            'flymake-get-real-file-name)))
 
 (defadvice flymake-process-sentinel
   (around haxe+flymake-process-sentinel (process event))
@@ -1136,7 +1145,7 @@ Key bindings:
   ;; (local-set-key "." haxe-completion-method)
   (local-set-key "(" 'haxe-hint-paren)
   (local-set-key (kbd "C-c h") 'haxe-electric-help)
-  (setq flymake-log-level 3)
+  ;; (setq flymake-log-level 3)
   ;; Here we should start setting up the connection.
   (haxe-identify-project-root)
   ;; Should already know enough to start the connection.
@@ -1158,18 +1167,18 @@ Key bindings:
                   (haxe-resolve-project-root) haxe-build-hxml)))
   ;; make tag search case-insensitive
   (setq tags-case-fold-search nil)
-  (flymake-mode)
+  (flymake-mode 1)
+  
+  (add-to-list 'ac-sources 'haxe-ac-dot-sources)
+  (add-to-list 'ac-modes 'haxe-mode)
+  (setq ac-auto-start 2)
+  (auto-complete-mode 1)
+  (ad-activate 'flymake-get-real-file-name-function)
   (ad-activate 'flymake-after-change-function)
   (ad-activate 'flymake-process-sentinel)
   (ad-activate 'c-forward-annotation)
   (ad-activate 'c-forward-decl-or-cast-1)
   (ad-activate 'c-beginning-of-macro)
-  (when (fboundp 'auto-complete-mode)
-    ;; TODO: Also need to disable the autocompletion on our side if
-    ;; auto-complete is not installed
-    (auto-complete-mode 1)
-    (when (boundp 'ac-sources)
-      (add-to-list 'ac-sources 'haxe-ac-dot-sources)))
   (add-hook 'kill-buffer-hook #'haxe-kill-network-process nil t)
   ;; (haxe-try-set-ecb-outlines)
   ;; ---------------------------- end my changes ----------------------

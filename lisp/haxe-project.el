@@ -152,56 +152,57 @@ directory, for example /home/user/projects/foo/src/org/user/utils/Bar.hx
 wil result in /home/user/projects/foo/src/ being selected as the root
 directory"
   (setq haxe-project-root nil)
-  (let* ((current (buffer-file-name))
-         (pos (string-match "/src/" current))
-         (dir (file-name-directory current)))
-    (when (require 'ede nil 'noerror)
-      ;; Let's try to search for the `ede' project first.
-      (message "about to check for haxe-ede-project-of-file")
-      (let ((maybe-ede-project (haxe-ede-project-of-file current)))
-        (message "maybe-ede-project found? %s" maybe-ede-project)
-        (when maybe-ede-project
-          ;; TODO: There are more useful things we need to set here,
-          ;; once we have ede project
-          (setq haxe-current-project maybe-ede-project
-                haxe-project-root (oref maybe-ede-project directory)
-                haxe-build-hxml
-                (concat (oref maybe-ede-project configuration-default) ".hxml")
-                haxe-compiler-default (oref maybe-ede-project compiler)
-                haxe-project-sources (oref maybe-ede-project sources)))))
-    (when (and (null haxe-project-root) (require 'eproject nil 'noerror))
-      ;; In case we discover that eproject is used, first try
-      ;; to find it's configuration file, perhaps if it was
-      ;; created by us, it will have `prj-directory' set to
-      ;; our project root. If it's not set, assume that the
-      ;; directory containing the project file is the project
-      ;; root. If the "project.cfg" doesn't exist, proceed
-      ;; with guessing. Require the 'eproject in case someone
-      ;; so we can access the variables it declares safely.
-      (catch 't
-        (while (position ?\/ dir)
-          (when (file-exists-p (concat dir "project.cfg"))
-            (if (boundp 'prj-directory)
-                (progn
-                  ;; (eproject-open (concat dir "project.cfg"))
-                  ;; The eproject code cannot handle opening project
-                  ;; files. It assumes that the project file must have been
-                  ;; registered in some central repository. It is
-                  ;; extremely inconvenient, and the project's own
-                  ;; sources are a mess, no comments, single-letter variable
-                  ;; names and so on. I don't want to waste time trying
-                  ;; to figure out how to use it. This is the minimum
-                  ;; I could have done. Once we have EDE this code will
-                  ;; be removed.
-                  (make-local-variable 'prj-directory)
-                  (load-file (concat dir "project.cfg"))
-                  (setq prj-directory (expand-file-name (or prj-directory dir)))
-                  (throw 't (setq haxe-project-root prj-directory)))
-              (throw 't nil)))
-          (setq dir (file-name-directory (directory-file-name dir))))))
-    (when (and (null haxe-project-root) pos)
-      (setq haxe-project-root (substring current 0 pos)))
-    haxe-project-root))
+  (let (current (buffer-file-name))
+    (when current
+      (let ((pos (string-match "/src/" current))
+            (dir (file-name-directory current)))
+        (when (require 'ede nil 'noerror)
+          ;; Let's try to search for the `ede' project first.
+          (message "about to check for haxe-ede-project-of-file")
+          (let ((maybe-ede-project (haxe-ede-project-of-file current)))
+            (message "maybe-ede-project found? %s" maybe-ede-project)
+            (when maybe-ede-project
+              ;; TODO: There are more useful things we need to set here,
+              ;; once we have ede project
+              (setq haxe-current-project maybe-ede-project
+                    haxe-project-root (oref maybe-ede-project directory)
+                    haxe-build-hxml
+                    (concat (oref maybe-ede-project configuration-default) ".hxml")
+                    haxe-compiler-default (oref maybe-ede-project compiler)
+                    haxe-project-sources (oref maybe-ede-project sources)))))
+        (when (and (null haxe-project-root) (require 'eproject nil 'noerror))
+          ;; In case we discover that eproject is used, first try
+          ;; to find it's configuration file, perhaps if it was
+          ;; created by us, it will have `prj-directory' set to
+          ;; our project root. If it's not set, assume that the
+          ;; directory containing the project file is the project
+          ;; root. If the "project.cfg" doesn't exist, proceed
+          ;; with guessing. Require the 'eproject in case someone
+          ;; so we can access the variables it declares safely.
+          (catch 't
+            (while (position ?\/ dir)
+              (when (file-exists-p (concat dir "project.cfg"))
+                (if (boundp 'prj-directory)
+                    (progn
+                      ;; (eproject-open (concat dir "project.cfg"))
+                      ;; The eproject code cannot handle opening project
+                      ;; files. It assumes that the project file must have been
+                      ;; registered in some central repository. It is
+                      ;; extremely inconvenient, and the project's own
+                      ;; sources are a mess, no comments, single-letter variable
+                      ;; names and so on. I don't want to waste time trying
+                      ;; to figure out how to use it. This is the minimum
+                      ;; I could have done. Once we have EDE this code will
+                      ;; be removed.
+                      (make-local-variable 'prj-directory)
+                      (load-file (concat dir "project.cfg"))
+                      (setq prj-directory (expand-file-name (or prj-directory dir)))
+                      (throw 't (setq haxe-project-root prj-directory)))
+                  (throw 't nil)))
+              (setq dir (file-name-directory (directory-file-name dir))))))
+        (when (and (null haxe-project-root) pos)
+          (setq haxe-project-root (substring current 0 pos)))
+        haxe-project-root))))
 
 (defun haxe-resolve-project-root ()
   "Used at the time of building the commands involving currnet project directory

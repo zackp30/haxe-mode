@@ -41,6 +41,7 @@
 (require 'haxe-help)
 (require 'haxe-compiler-mode)
 (require 'xml)
+(require 'auto-complete)
 
 ;; TODO: obtain the values of $HAXE_HOME and $HAXE_LIBRARY_PATH
 ;; perhaps alert the user, if these are not set!
@@ -52,6 +53,7 @@ auto-complete library to show the completion options, `haxe-complete-dot-ido' us
 ido to do the same."
   :type 'function :group 'haxe-mode)
 
+;;;###autoload
 (defvar haxe-ac-dot-sources
   '((init . haxe-ac-init)
     (requires . 0)
@@ -159,45 +161,22 @@ SEPARATOR is used to delimit lines read from the file"
   "Loop back until we either find a dot to complete after, or
 find nothing and return nil."
   (message "haxe-ac-prefix-matcher")
-  (let ((start (point)) (w " ")
-        current seen-white face)
-    (catch 't
-      (while (> start 0)
-        (setf current (char-before start)
-              (aref w 0) current)
-        (cond
-         ((string-match "\\w" w)
-          (when seen-white (throw 't nil)))
-         ((string-match "\\s-" w)
-          (setq seen-white t))
-         ((char-equal current ?.)
-          (setq face (haxe-face-at-point start))
-          (if (and (> start 0)
-                   (not (char-equal (char-before (1- start)) ?.))
-                   (or (null face)
-                       (not (member face
-                                    '(font-lock-string-face
-                                      font-lock-comment-face
-                                      font-lock-preprocessor-face)))))
-              ;; Need to save here, otherwise the compiler
-              ;; will get the old copy of the buffer, which doesn't have
-              ;; the dot.
-              (progn
-                (haxe-ensure-completion-file)
-                ;; we need to calculate this distance in bytes,
-                ;; not characters iirc for HaXe (not the auto-complete)
-                (throw 't (incf start)))
-            (throw 't nil)))
-         (t (throw 't nil)))
-        (decf start)) start)))
-
-;; (defun haxe-ac-prefix-matcher ()
-;;   ;; Need to check if we aren't inside a for (i in x..y) loop
-;;   (let ((dot-position (re-search-backward "\\.\\(\\s_\\|\\sw\\)*" nil t)))
-;;     (message "haxe-ac-prefix-matcher searching for prefix... %s"
-;;           (1+ dot-position))
-;;     (save-buffer)
-;;     (1+ dot-position)))
+  (unless (member (haxe-face-at-point)
+                  '(font-lock-string-face
+                    font-lock-comment-face
+                    font-lock-preprocessor-face))
+    (++
+      (with ((w " ") last))
+      (for i from (point) downto (point-min))
+      (setf (aref w 0) (char-before i))
+      (unless (string-match "[[:alnum:]_]" w)
+        (return
+         ;; filter out floats
+         (let ((result (and (string-match "\\." w)
+                            (not (string-match "\\d" (make-string 1 last))))))
+           (when result (haxe-ensure-completion-file))
+           result)))
+      (setf last (char-before i)))))
 
 (defun haxe--relative-path (file)
   (let ((source (haxe--source-dir-of-file file)))
@@ -463,34 +442,28 @@ is taken to be the name of the field to complete and their child node
         (let* ((root (progn (insert xml)
                             (xml-parse-region (point-min) (point-max))))
                (options (car root))
-               (is (xml-get-children options 'i))
-               completions
-               docs)
-          (dolist (i is completions)
-            (setq completions
-                  (cons (cdar (xml-node-attributes i)) completions)
-                  docs
-                  (cons (haxe-fold-string
+               (is (xml-get-children options 'i)))
+          (i++ (for i in is)
+               (collect (cdar (xml-node-attributes i)) into completions)
+               (collect (haxe-fold-string
                          (haxe-condence-white-string
                           (haxe-replace-all
                            (haxe-trim-string
                             (car (last (car (xml-get-children i 'd)))))
-                           [?\t] [?\ ])) 42 3 2) docs))
-            (puthash (car completions)
-                     (concat (car completions) "\n" (car docs))
-                     haxe-documentation-hash))
-          (message "haxe-parse-ac-response dolist done %s" completions)
-          ;; This is unsafe, in case we fail to parse, we kill flymake too...
-          (setq haxe-completion-requested nil
-                haxe-last-ac-candidates completions)))
+                           "\t" " ")) 42 3 2)
+                        into docs)
+               (puthash (car completions)
+                        (concat (car completions) "\n" (car docs))
+                        haxe-documentation-hash)
+               (finally (setf haxe-last-ac-candidates completions)))))
     (error (haxe-log 0 "Error when parsing completion options %s, %s" var xml))))
 
 (defun haxe-exception-p (first-char second-char exceptions)
   "Werifies whether the EXCEPTIONS contains a pair (FIRST-CHAR SECOND-CHAR)"
-  (dolist (i exceptions)
-    (when (and (char-equal (car i) first-char)
-               (char-equal (cdr i) second-char))
-      (return t))))
+  (i++ (for (a b) in exceptions)
+       (when (and (char-equal a first-char)
+                  (char-equal b second-char))
+         (return t))))
 
 (defun haxe-read-word (input position delimiters ends exceptions)
   "Reads the first word from the INPUT, starting from position. The word

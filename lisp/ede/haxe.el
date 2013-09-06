@@ -176,6 +176,7 @@ if there is no .haxeproject file."))))
         finally (return absolute-path)))
 
 (defun haxe-ensure-file (file buffer)
+  (message "haxe-ensure-file: %s" file)
   (make-directory (file-name-directory file) t)
   (when (file-exists-p file) (delete-file file))
   (with-current-buffer buffer

@@ -1,0 +1,108 @@
+#+TITLE:     Support for Haxe in Org-Babel, Emacs
+#+AUTHOR:    Oleg Sivokon
+#+EMAIL:     olegsivokon@gmail.com
+#+DATE:      2013-09-06 Fri
+#+DESCRIPTION: Presentation for talk on Haxe support in Org-Babel
+#+KEYWORDS: Haxe Emacs Org-mode Org-Babel
+#+LANGUAGE:  en
+#+OPTIONS:   H:3 num:t toc:t \n:nil @:t ::t |:t ^:t -:t f:t *:t <:t
+#+OPTIONS:   TeX:t LaTeX:t skip:nil d:nil todo:t pri:nil tags:not-in-toc
+#+INFOJS_OPT: view:nil toc:nil ltoc:t mouse:underline buttons:0 path:http://orgmode.org/org-info.js
+#+EXPORT_SELECT_TAGS: export
+#+EXPORT_EXCLUDE_TAGS: noexport
+#+LINK_UP:   
+#+LINK_HOME: 
+#+XSLT:
+#+STARTUP: beamer
+#+LaTeX_CLASS: beamer
+#+LaTeX_CLASS_OPTIONS: [bigger]
+#+BEAMER_FRAME_LEVEL: 2
+#+COLUMNS: %40ITEM %10BEAMER_env(Env) %9BEAMER_envargs(Env Args) %4BEAMER_col(Col) %10BEAMER_extra(Extra)
+
+* Brief Introduction to Emacs Org-Mode
+
+** Scope                                                            :B_verse:
+   :PROPERTIES:
+   :BEAMER_env: verse
+   :END:
+   This section is target at novice users, who don't know what =org-mode= is.
+
+** Area of application
+   =org-mode= is an editing mode for Emacs. Its primary objectives
+   are:
+   - To act as a personal organizer.
+   - To keep a journal of a research.
+   - To produce technical documentation.
+   - To provide accounting assistance via spreadsheets.
+
+** History
+   =org-mode= was started (in 2003) and is maintained today by
+   Prof. Carsten Dominik, who works for astronomy department of
+   University of Amsterdam.  =org-mode= is one of the most actively
+   developed Emacs packages.  It is part of the Emacs distribution
+   since Emacs 22.
+
+** Examples
+   This presentation was developed using =org-mode= and was exported
+   using [[http://en.wikipedia.org/wiki/Beamer_(LaTeX)][Beamer LaTeX package]].
+
+* Role of Org-Babel
+
+** Overview                                                         :B_verse:
+   :PROPERTIES:
+   :BEAMER_env: verse
+   :END:
+   =org-babel= is a facility that provides inline code evaluation,
+   highlighting and tangling[fn:1: Tangling and untangling is the
+   process employed in literate programming for hiding and displaying
+   code blocks.].
+  
+** Documentation
+   My primary use of =org-babel= is to provide nicely formatted code
+   blocks with documentation. Eventually, this may also include
+   diagrams.
+   
+** Research
+   =org-babel= may be very useful for researches in various fields,
+   where it allows them to embed their programs, proofs and the
+   results of executing the code directly in the document. More yet,
+   it allows the results obtained by one researcher to be reproduced
+   by her colleagues.
+
+** Scientific publications
+   There are many books published using =org-mode= and LaTeX, where
+   =org-babel= played a significant role. For example, Benjamin
+   C. Pierce's book on type theory.
+
+* Haxe Support
+
+** What was done so far
+   So far Haxe support is limited to only JavaScript. The support
+   for tables is in the early stage. Additionaly, this requires
+   Node.js for evaluating the results.
+
+** Planned features
+   - Add support to other Haxe targets.
+   - Support tables.
+   - Export generated source code in the target language.
+   - Generate HTML code for inclusion of SWF for Flash target.
+
+** Example
+   #+NAME: haxe-example
+   #+BEGIN_SRC haxe
+     package ;
+     class OrgBabelTest {
+       
+       static function main() {
+         trace("OrgBabelTest::main called");
+       }
+       
+     }
+   #+END_SRC
+
+** And the result is
+   #+CALL: haxe-example()
+
+   #+RESULTS: haxe-example()
+   : OrgBabelTest::main called
+
