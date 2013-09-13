@@ -88,7 +88,7 @@
   "Arguments used to compile Haxe code.")
 
 (defvar org-babel-haxe-template
-  "package %s; class %s{static function main(){%s}}"
+  "package %s; class %s{#__vars__#static function main(){%s}}"
   "The template to be used when we have incomplete code.")
 
 ;; optionally define a file extension for this language
@@ -97,23 +97,36 @@
 ;; optionally declare default header arguments for this language
 (defvar org-babel-default-header-args:haxe '())
 
+(defun org-babel-haxe-var-pair (pair)
+  (format "static var %s = %s;"
+          (car pair) (org-babel-haxe-var-to-haxe (cdr pair))))
+
 ;; This function expands the body of a source code block by doing
 ;; things like prepending argument definitions to the body, it should
 ;; be called by the `org-babel-execute:haxe' function below.
 (defun org-babel-expand-body:haxe (body params &optional processed-params)
   "Expand BODY according to PARAMS, return the expanded body."
+  (message "org-babel-expand-body:haxe %S %S" params processed-params)
   (let ((vars
-         (cl-remove-if-not
-          #'consp
-          (second (or processed-params
+         (mapcar 'cdr
+                 (cl-remove-if
+                  (lambda (x) (not (eql (car x) :var)))
+                  (or processed-params
                       (org-babel-process-params params))))))
     (message "vars: %s" vars)
-    (concat
-     (mapconcat ;; define any variables
-      (lambda (pair)
-        (format "var %s = %S;"
-                (car pair) (org-babel-haxe-var-to-haxe (cdr pair))))
-      vars "\n") "\n" body "\n")))
+    (unless (search "#__vars__#" body)
+      (let ((pattern
+             (format "class\\s-*%s\\(\\s-\\|\\n\\)*{"
+                     (org-babel-haxe-find-module-name body)))
+            case-fold-search)
+        (string-match pattern body)
+        (setf body
+              (replace-regexp-in-string
+               pattern 
+               (format "%s\n#__vars__#" (match-string 0 body)) body t t))))
+    (message "body: %s" body)
+    (replace-regexp-in-string
+     "#__vars__#" (cl-format "%{%/org-babel-haxe-var-pair/%^\n%}" vars) body t t)))
 
 (defun org-babel-haxe-backend-args (backend classname packagename)
   (cond
@@ -160,7 +173,6 @@
      ((and blockcommentp (char-equal ca ?*) (char-equal cb ?\/))
       (setf blockcommentp nil))
      ((char-equal cb ?\n) (setf linecommentp nil)))
-    (message "ca: %s a: %d, b: %d result: %s" ca a b (reverse result))
     (unless (or blockcommentp linecommentp)
       (collect ca into result))
     (finally

@@ -118,5 +118,5 @@
    #+CALL: haxe-example()
 
    #+RESULTS: haxe-example()
-   : OrgBabelTest::main called
+   : OrgBabelTest::main вызвана!
 
