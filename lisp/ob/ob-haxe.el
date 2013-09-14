@@ -75,6 +75,7 @@
 (require 'ob-eval)
 (eval-when-compile (require 'cl))
 (require 'haxe-mode)
+(require 'haxe-serializer)
 
 (defvar org-babel-haxe-compiler "haxe"
   "Path to Haxe compiler.")
