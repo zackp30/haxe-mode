@@ -20,14 +20,14 @@ INSTALLATION:
         move the required files, currently, this all is a hand work.
         To install the project you would need to add the directory containing project
         sources to the `load-path' list. for example:
-        (add-to-list 'load-path (expand-file-name "~.emacs.d/plugins/hx-emacs/"))
+        (add-to-list 'load-path (expand-file-name "~/.emacs.d/plugins/hx-emacs/"))
 
         Next, download and install auto-complete library:
         http://cx4a.org/software/auto-complete/
         Follow the installation instruction here:
         http://cx4a.org/software/auto-complete/manual.html#Installation
         but before you compile it (before the very first step), find file `haxe-mode'
-        in the xh-emacs directory and copy it to auto-complete/dict/ directory.
+        in the hx-emacs directory and copy it to auto-complete/dict/ directory.
         This file is used as a dictionary for some basic lexical completion.
 
         Next, download and install Flymake: http://flymake.sourceforge.net/
